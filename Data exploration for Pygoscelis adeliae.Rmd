@@ -1,0 +1,157 @@
+---
+title: "Data exploration for Pygoscelis adeliae"
+author: "Yian Lin"
+date: "4/15/2022"
+output: html_document
+---
+
+```{r setup, results="hide"}
+library(tidyverse)
+```
+
+```{r import data, results="hide"}
+PLD <- read.csv("/Users/apple/Documents/UW/PhD
+                project/Data/LPD/population_record_for_Pygoscelis
+                adeliae_cleaned.csv", header=TRUE)
+colnames(PLD)
+PLD <- PLD[,c(1,2,6,7,10:16,19,23:70)] #select useful columns
+
+long_LPD <- PLD %>%
+    # gather takes these arguments:
+    # key=name of the longitudinal variable to be created
+    # value=name of the variable measured at each occasion
+    # the rest are names of what you want to go from individual columns to values under the longitudinal variable
+    # note that any variable not mentioned will be unchanged
+    gather(key=Time, value=Abundance, X1970:X2014) %>%
+    # separate takes these arguments:
+    # col=column we want to split up into two
+    # into=character strings for the names of new columns we want to create
+    # sep=the character at which we want to split the col variable
+    # (could also split based on punctuation - see ?separate)
+    # convert=TRUE means take anything that looks like a number and make it a number instead of character
+    separate(col=Time, into=c("prefix","Year"), sep=1, convert=TRUE) %>%
+    select(-prefix) %>% # drop prefix
+    arrange(id, Year) # sort by population id and Year using arrange
+
+### BioTIME
+#biotime <- read.csv("/Users/apple/Documents/UW/PhD project/Data/BioTIME/Raw data for Pygoscelis adeliae.csv")
+
+```
+
+```{r explore}
+long_LPD <- long_LPD %>% 
+  filter(!is.na(Abundance)) # remove years with no abundance data
+length(unique(long_LPD$id)) #number of local population == 76
+length(unique(long_LPD$Data.source.citation)) #number of studies == 23
+# compute the number of data points per local population
+(n_obs_by_id <- long_LPD %>%
+  group_by(id) %>%
+  summarize(n=n()))
+hist(n_obs_by_id$n)
+long_LPD <- merge(long_LPD, n_obs_by_id, by = "id")
+```
+[[Spooner et al 2018]]: "The population count data were logged (base 10) so that it was possible to compare changes in population trends irrespective of their size (prior to this, zeros were replaced with 1% of the mean population count of the time series so that it was possible to log these values, following Collen et al., 2009)." 
+
+```{r plot}
+# Replace 0 in Abundance with 1% of the mean population count of the time series
+#long_LPD$log10_Abundance <- long_LPD$Abundance
+#long_LPD[,"log10_Abundance"]
+  
+# For local pop with 5 or more observations
+abundance_graph <- ggplot(data = long_LPD %>% filter(n >=5)) +
+    geom_point(mapping = aes(x=Year, y=log10(Abundance), group=id)) +
+    ggtitle("Abundance by year for each local pop") +
+    theme_bw()
+
+abundance_graph +
+    # will make a graph for each cow wrapping across columns
+    facet_wrap( ~ id, ncol=11)
+
+```
+
+```{r}
+# look at local population "10283"
+long_LPD[long_LPD$id == "10283", c("Year", "Abundance")]
+mean(long_LPD[long_LPD$id == "10283", c("Abundance")])
+```
+
+```{r}
+# Don't include id == "10283" and id == "10221" in the plot
+abundance_graph <- ggplot(data = filter(long_LPD, (n >=5) & (id != "10283") & (id != "10221"))) +
+    geom_point(mapping = aes(x=Year, y=log10(Abundance), group=id), size=0.5) +
+    ggtitle("Abundance by year for each local pop") +
+    theme_bw()
+
+abundance_graph +
+    # will make a graph for each cow wrapping across columns
+    facet_wrap( ~ id, ncol=11)
+```
+
+```{r}
+unique(long_LPD$Units)
+long_LPD[long_LPD$Units == "breeding pairs.percentange change", c("id","Year","Abundance")]
+```
+
+Try the 2nd way of transformation: Percentage of the first available abundance value.
+```{r}
+long_LPD$Abundance_percent <- 1
+ids <- unique(long_LPD$id)
+for (pop in ids) {
+  #The first available abundance value of this subset
+  first <- (long_LPD[long_LPD$id == pop, "Abundance"])[1]
+  #Fill the Abundance_percent column
+  long_LPD[long_LPD$id == pop, "Abundance_percent"] <-
+    long_LPD[long_LPD$id == pop, "Abundance"]/first
+}
+
+#Plot
+abundance_graph <- ggplot(data = filter(long_LPD, (n >=5)))
+abundance_graph + 
+  geom_point(mapping = aes(x = Year, y = Abundance_percent, group = id, color = Data.source.citation), size=0.5, show.legend = FALSE) +
+  ggtitle("Abundance by year for each local pop") +
+  theme_bw() +
+  facet_wrap( ~ id, ncol=11)
+
+```
+
+```{r}
+# look at local population "10219"
+long_LPD[long_LPD$id == "10219", c("Year", "Abundance", "Units", "Abundance_percent")]
+mean(long_LPD[long_LPD$id == "10219", c("Abundance")])
+```
+
+```{r}
+#Zoom in to see the variation in Abundance_percent more clearly
+abundance_graph + 
+  geom_point(mapping = aes(x = Year, y = Abundance_percent, group = id, color = Data.source.citation), size=0.5, show.legend = FALSE) +
+  ggtitle("Abundance by year for each local pop") +
+  theme_bw() +
+  facet_wrap( ~ id, ncol=11) +
+  coord_cartesian(ylim = c(0, 6))
+```
+
+```{r}
+#Add a column to long_LPD: max_Abundance_percent
+(max_abun_percent_by_id <- long_LPD %>%
+  group_by(id) %>%
+  summarize(max_abun_percent = max(Abundance_percent)))
+hist(max_abun_percent_by_id$max_abun_percent)
+long_LPD <- merge(long_LPD, max_abun_percent_by_id, by = "id")
+
+#Plot for populations with max_abun_percent <= 3
+ggplot(data = filter(long_LPD, n >=5 & max_abun_percent <= 3), mapping =
+         aes(x = Year, y = Abundance_percent, group = id, color =
+               Data.source.citation)) + 
+  geom_point(size=0.5, show.legend = FALSE) +
+  geom_line( show.legend = FALSE) +
+  ggtitle("Abundance by year for each local pop") +
+  theme_bw() +
+  facet_wrap( ~ id, ncol=11)
+```
+
+```{r}
+# test to see if the group_by() effects last for future computation if not ungroup()
+test_set <- long_LPD[1:10, c("id","Year","Abundance_percent")] 
+test_set <- test_set %>% group_by(id)
+test_set <- test_set  %>%  mutate(scalepop =                                   (Abundance_percent-min(Abundance_percent))/                                (max(Abundance_percent)-min(Abundance_percent))) # Yes. The group_by() effects last if you store the result of group_by() as test_set <- test_set %>% group_by(id).
+```
